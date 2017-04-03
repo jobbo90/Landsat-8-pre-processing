@@ -1,0 +1,116 @@
+# Process and analyse vegetation index
+library(sp)
+library(rgdal)
+library(raster)
+library(spatial)
+library(RStoolbox)
+library(snow)
+
+# Set working directory and create a list with al folders
+setwd('F:/ICARDA/Imagery/Landsat8')
+folders <- list.dirs(full.names=FALSE, recursive = FALSE)
+
+################################### functions #########################################
+# Sum raster layers
+calc.sum <- function(x) {
+  return(mean(x, na.rm=TRUE) * length(x))
+}
+
+###################################### location ANALYSIS #############################
+# All transformations julian day -> to accurate date, relate to 1-jan of that year
+jan <- "-01-01" 
+
+# 3 location coordinates
+X1 <- 227295.00
+Y1 <- 3514328.00
+X2 <- 227178.00
+Y2 <- 3514236.00
+X3 <- 227425.08
+Y3 <- 3514015.72
+X4 <- 227762.53 
+Y4 <- 3513828.46
+X5 <- 228110.00
+Y5 <- 3513752.00
+
+data1 <-data.frame(X1,Y1)
+coordinates(data1) <- c("X1","Y1")
+data2 <-data.frame(X2,Y2)
+coordinates(data2) <- c("X2","Y2")
+data3 <-data.frame(X3,Y3)
+coordinates(data3) <- c("X3","Y3")
+data4 <-data.frame(X4,Y4)
+coordinates(data4) <- c("X4","Y4")
+data5 <-data.frame(X5,Y5)
+coordinates(data5) <- c("X5","Y5")
+
+# create an empty list with the acquisition dates in a readable format.
+date_list <- outer(1:length(folders),1:9)
+q = 1
+
+# Extract values from all files
+beginCluster()
+start <- Sys.time()
+for (scene in folders){
+  year <- substr(scene, start=10, stop=13)
+  day <- substr(scene, start=14, stop=16)
+  datum <- paste(year, day, sep='_')
+  
+  # Take relevant image as raster
+  LSWI_image <- raster(paste(scene,'/',year,"_", day,'_LSWI_NOcloud.TIF', sep=''))
+  LSWI_extract1 <- extract(LSWI_image, data1)
+  LSWI_extract2 <- extract(LSWI_image, data2)
+  LSWI_extract3 <- extract(LSWI_image, data3)
+  LSWI_extract4 <- extract(LSWI_image, data4)
+  LSWI_extract5 <- extract(LSWI_image, data5)
+  
+  date_list[q, 1] <- datum
+  date_list[q, 2] <- year
+  date_list[q, 3] <- day
+  date_list[q, 4] <- as.character(as.Date(datum, format = "%Y_%j")) 
+  date_list[q, 5] <- LSWI_extract1
+  date_list[q, 6] <- LSWI_extract2
+  date_list[q, 7] <- LSWI_extract3
+  date_list[q, 8] <- LSWI_extract4
+  date_list[q, 9] <- LSWI_extract5
+  q = q + 1
+  print(q)
+}
+write.table(date_list, 'F:/ICARDA/DroughtMapping/Output/LSWI_extract_locations.txt')
+
+end <- Sys.time()
+difftime(end, start)
+endCluster()
+
+##################################### Image analysis #########################################
+
+# extract and stack relevant images
+LSWI_list <- list.files(full.names = TRUE, recursive = TRUE, pattern = "LSWI_NOcloud.tif$")
+LSWI_stack <- stack(LSWI_list, quick = TRUE)
+recl_list <- list.files(full.names = FALSE, recursive = TRUE, pattern = "LSWI_reclass.tif$")
+recl_stack <- stack(recl_list, quick = TRUE)
+
+### Min & Max values with parallel computing
+beginCluster()
+start <- Sys.time()
+max_image <- max(LSWI_stack, na.rm = TRUE)
+writeRaster(max_image, filename = 'F:/ICARDA/DroughtMapping/Output/LSWI_all_inclCloud.tif', format = 'GTiff',
+            datatype='flt8s', overwrite = TRUE)
+min_image <- min(LSWI_stack, na.rm = TRUE)
+writeRaster(min_image, filename = 'F:/ICARDA/DroughtMapping/Output/min_all.tif', format = 'GTiff',
+             datatype='flt8s', overwrite = TRUE)
+
+end <- Sys.time()
+difftime(end, start)
+endCluster()
+
+### Drought duration
+
+# Sum classified images to count the amount of days classified as drougth
+beginCluster()
+start <- Sys.time()
+test.sum <- clusterR(recl_stack, calc, args=list(fun=calc.sum))
+writeRaster(test.sum, filename = 'F:/ICARDA/DroughtMapping/Output/duration_1516.tif', 
+            format = 'GTiff', datatype='flt8s', overwrite = TRUE)
+end <- Sys.time()
+difftime(end, start)
+endCluster()
