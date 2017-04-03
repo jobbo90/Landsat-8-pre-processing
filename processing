@@ -1,0 +1,95 @@
+# Processing LANDSAT 8 images for vegetation indexes
+library(sp)
+library(rgdal)
+library(raster)
+library(spatial)
+library(RStoolbox)
+library(snow)
+
+setwd('F:/ICARDA/Imagery/Landsat8')
+folders <- list.dirs(full.names=FALSE, recursive = FALSE)
+
+##################################### FUNCTIONS 
+## Function that calculates the index
+calc.index <- function(x, y) {
+  index <- (x - y) / (x + y)
+  return(index)
+}
+
+## Value replacement function for clouds
+cloud2NA <- function(x,y){
+  x[y != 0] <- NA
+  return(x)
+}
+
+#################### Calculations
+
+## set up the cluster object for parallel computing
+beginCluster()
+start <- Sys.time()
+counter = 1
+
+# Calculate index of interest
+for(scene in folders){
+  print(counter)
+  print(scene)
+  
+  # Read Metadata file from folder
+  metadatas <- readMeta(paste(scene,'/',scene,'_MTL.TXT', sep=''))
+  year <- substr(scene, start=10, stop=13)
+  day <- substr(scene, start=14, stop=16)
+  
+  # Read layers with atmospheric corrected values and clouds & shadows exluded
+  RED <- raster(paste(scene,'/', scene, '_sr_band4', sep=''))
+  NIR <- raster(paste(scene,'/', '_REFL_VERYCLEAR_NIR.TIF', sep=''))
+  SWIR1 <- raster(paste(scene,'/',scene, '_sr_band6.TIF', sep=''))
+  SWIR2 <- raster(paste(scene,'/', '_REFL_VERYCLEAR_SWIR2.TIF', sep=''))
+  #BQA <- raster(paste(scene,'/',scene,'_qa.TIF', sep=''))
+  
+  # stack relevant layers for index
+  stacked <- stack(NIR, SWIR2)
+  LSWI <- clusterR(stacked, overlay, args = list(fun=calc.index))
+  writeRaster(LSWI, filename=paste0(scene,'/', year, '_', day, '_LSWI2130'), format='GTiff', 
+              datatype='FLT4S', overwrite=TRUE)
+  counter = counter + 1
+}
+
+endCluster()
+end <- Sys.time()
+difftime(end, start)
+
+################################ Calculate reclassified values
+beginCluster()
+start <- Sys.time()
+counter = 1
+## Matrix used for classification 
+M <- matrix(c(-1, 0, 1, 0 , 1 , 0),nrow = 2, ncol=3,byrow = TRUE)
+
+for(scene in folders){
+  print(counter)
+  print(scene)
+  year <- substr(scene, start=10, stop=13)
+  day <- substr(scene, start=14, stop=16)
+  
+  
+  LSWI <- raster(paste(scene,'/', year, '_', day, '_LSWI.TIF', sep=''))
+  NDVI <- raster(paste(scene,'/', year, '_', day, '_NDVI.TIF', sep=''))
+  reclassified <- reclassify(LSWI, M)
+  # write raster, to smallest possible data type:
+  writeRaster(reclassified, filename=paste0(scene,'/', year, '_', day, '_LSWI_reclass'), 
+              format='GTiff', datatype='INT1U', overwrite=TRUE)
+
+  # open reclassified raster & Fmask file
+  LSWI.reclass <- raster(paste(scene,'/', year, '_', day, '_LSWI_reclass.TIF', sep=''))
+  fmask <- raster(paste(scene, '/', year, '_', day, '_Fmask.tif', sep=''))
+  
+  # Extract clip clouds (2) and shadows (4)
+  fmask[fmask %in% c(0, 1, 3, 255)] <- NA
+  LSWI.cloudfree <- overlay(x=LSWI, y=fmask, fun = cloud2NA)
+  writeRaster(LSWI.cloudfree, filename=paste0(scene,'/', year, '_', day, '_LSWI_NOcloud'), 
+               format='GTiff', datatype='flt4s', overwrite=TRUE)
+  counter = counter + 1
+}
+endCluster()
+end <- Sys.time()
+difftime(end, start)
