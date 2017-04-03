@@ -1,0 +1,52 @@
+## Apply radiometric & Atmospheric correction
+library(sp)
+library(raster)
+library(spatial)
+library(RStoolbox)
+library(snow)
+
+## Set working directory and create a list with al folders
+setwd('F:/ICARDA/Imagery/Landsat8')
+folders <- list.dirs(full.names=FALSE, recursive = FALSE)
+
+beginCluster()
+start <- Sys.time()
+counter = 1
+## pre processing of images
+for (scene in folders){
+  print(counter) 
+  print(scene)
+  
+  ## extract metadata file from the folder and load in stack
+  metadatas <- readMeta(paste(scene,'/',scene,'_MTL.TXT', sep=''))
+  stacked <- stackMeta(metadatas, quantity ='all', category = "all", allResolutions = TRUE)
+
+  ## Apply radiametric&Atmospheric correction
+  stack_cor <- radCor(stacked$spatRes_30m, metaData = metadatas, method = 'costz', 
+                      atmosphere = "veryClear", verbose = FALSE)
+
+  RED <- stack_cor$B4_sre
+  NIR <- stack_cor$B5_sre
+  SWIR1 <- stack_cor$B6_sre
+  SWIR2 <- stack_cor$B7_sre
+  TIR1 <- stack_cor$B10_bt
+  TIR2 <- stack_cor$B11_bt
+
+  # Write rasters
+  writeRaster(RED, filename=paste0(scene,'/',scene, '_REFL_VERYCLEAR_RED'), format='GTiff',
+              datatype='FLT4S', overwrite=TRUE)
+  writeRaster(NIR, filename=paste0(scene,'/',scene, '_REFL_VERYCLEAR_NIR'), format='GTiff',
+              datatype='FLT4S', overwrite=TRUE)
+  writeRaster(SWIR1, filename=paste0(scene,'/',scene, '_REFL_VERYCLEAR_SWIR1'), format='GTiff',
+              datatype='FLT4S', overwrite=TRUE)
+  writeRaster(SWIR2, filename=paste0(scene,'/',scene, '_REFL_VERYCLEAR_SWIR2'), format='GTiff',
+              datatype='FLT4S', overwrite=TRUE)
+  writeRaster(TIR1, filename=paste0(scene,'/',scene, '_REFL_VERYCLEAR_TIR1'), format='GTiff',
+              datatype='FLT4S', overwrite=TRUE)
+  writeRaster(TIR2, filename=paste0(scene,'/',scene, '_REFL_VERYCLEAR_TIR2'), format='GTiff',
+              datatype='FLT4S', overwrite=TRUE)
+  counter = counter + 1
+}
+endCluster()
+end <- Sys.time()
+difftime(end, start)
